@@ -1,19 +1,23 @@
-# adblocker
+<div align="center">
+  <img src="assets/logo.svg" width="120" alt="Lime: a lime slice crossing out an ad tile" />
+</div>
 
-A simple command-line ad blocker for macOS that manages `/etc/hosts`.
-Downloads the [StevenBlack unified hosts](https://github.com/StevenBlack/hosts)
+# Lime
+
+A command-line ad blocker for macOS that manages `/etc/hosts`. It downloads
+the [StevenBlack unified hosts](https://github.com/StevenBlack/hosts)
 blocklist, validates it, and writes it into `/etc/hosts` between markers so ad
-and tracker domains resolve to `0.0.0.0`. This blocks ads across **every**
-browser and app on your Mac, not just one.
+and tracker domains resolve to `0.0.0.0`. That blocks ads in every browser and
+app on your Mac, not just one.
 
-No GUI, no background services — a single Rust binary driven by a
-[Justfile](https://github.com/casey/just).
+No GUI, no background services. One Rust binary (called `adblocker`), driven
+by a [Justfile](https://github.com/casey/just).
 
 ## Requirements
 
 - macOS (tested on Sequoia 15.7)
 - [Rust](https://www.rust-lang.org/) (stable, via rustup)
-- [`just`](https://github.com/casey/just) — install with `brew install just`
+- [`just`](https://github.com/casey/just), install with `brew install just`
 
 ## Install
 
@@ -78,7 +82,7 @@ sh scripts/install-schedule.sh
 This copies the refresh script into
 `~/Library/Application Support/adblocker/`, generates and loads the
 LaunchAgent, and prints a one-time `sudo` command to create a passwordless
-sudoers entry restricted to **only** `adblocker apply` and `adblocker disable`
+sudoers entry restricted to only `adblocker apply` and `adblocker disable`
 (so the unattended job can write `/etc/hosts` without your password). Run
 that printed command, then test it:
 
@@ -150,21 +154,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the tool is built.
 
 ## Limitations
 
-A hosts file blocks whole domains, so it **cannot** block ads served from the
-same domain as the content you want — YouTube, many streaming services, and
-most social platforms serve ads from their own domains. It also cannot block
-ads whose hostnames are generated at runtime by JavaScript, or popunders
-opened with `window.open`. Use `adblocker` **alongside** a browser content
-blocker such as [uBlock Origin](https://github.com/gorhill/uBlock); it is a
-complement, not a replacement.
+A hosts file blocks whole domains, so it can't touch ads served from the same
+domain as the content you want. YouTube, most streaming services, and most
+social platforms serve ads from their own domains. It also can't block
+hostnames that JavaScript generates at runtime, or popunders opened with
+`window.open`. Run Lime alongside a browser content blocker such as
+[uBlock Origin](https://github.com/gorhill/uBlock); it's a complement, not a
+replacement.
 
-`adblocker` is the broad, whole-machine layer (every app, ~71k known
-ad/tracker domains). uBlock Origin is the in-browser layer that can also
-block scripts, URL paths, and popups. You need both because a hosts file
-operates below the browser and cannot see same-domain or JavaScript-injected
-ads.
+Lime is the whole-machine layer: every app, ~71k known ad/tracker domains.
+uBlock Origin is the in-browser layer that can also block scripts, URL paths,
+and popups. You need both because a hosts file operates below the browser and
+can't see same-domain or JavaScript-injected ads.
 
-### Setting up uBlock Origin for the cases `adblocker` can't handle
+### Setting up uBlock Origin for the cases Lime can't handle
 
 1. **Install uBlock Origin** in your browser from
    [github.com/gorhill/uBlock](https://github.com/gorhill/uBlock) (or your
@@ -184,35 +187,35 @@ ads.
    ```
    ||example.com/assets/ads.js$script
    ```
-   This is a *path-level* block — it kills the ad script without touching the
+   This is a *path-level* block: it kills the ad script without touching the
    content on the same host. A hosts file cannot do this; only a browser
    extension can.
 
 4. **Catch what slips through.** If a popunder still opens, uBlock Origin
    logs the blocked or attempted URL in its dashboard → **Logger**. If the
    popunder lives on a *separate* ad domain, you can add it either to
-   uBlock's **My filters** or to `adblocker`:
+   uBlock's **My filters** or to Lime:
    ```bash
    adblocker block that-ad-domain.example
    just update && sudo just apply
    ```
    If it lives on the *same* domain as the content, keep the block in
-   uBlock Origin (step 3), not in `adblocker`.
+   uBlock Origin (step 3), not in Lime.
 
 ### A concrete example
 
 Streaming embed sites (e.g. `vsembed.ru`) are the exact case a hosts file
 cannot touch: the video and the ads are served from the same host, the ad
 script (`/assets/sbx.js`) is bundled and same-origin, and the popunder URLs
-are built at runtime with `window.open` from the current date — so there is
-no fixed ad domain to sinkhole. Adding the site to `adblocker` would break
-the video. The fix lives entirely in uBlock Origin: block the script path
+are built at runtime with `window.open` from the current date, so there is
+no fixed ad domain to sinkhole. Adding the site to Lime would break the
+video. The fix lives entirely in uBlock Origin: block the script path
 (`||vsembed.ru/assets/sbx.js$script`) and enable the Popups filter list.
 
 ## Credits
 
-Blocklist: [StevenBlack/hosts](https://github.com/StevenBlack/hosts) — MIT
-License. This project merges, validates, and applies that list; it does not
+Blocklist: [StevenBlack/hosts](https://github.com/StevenBlack/hosts), MIT
+License. Lime merges, validates, and applies that list; it does not
 redistribute the list itself.
 
 ## License

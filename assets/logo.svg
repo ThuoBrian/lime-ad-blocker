@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Lime: a lime slice crossing out an ad tile">
+  <!-- background -->
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="#1B4332"/>
+
+  <!-- lime slice -->
+  <circle cx="248" cy="268" r="150" fill="#82C91E"/>
+  <circle cx="248" cy="268" r="132" fill="#F4FBE9"/>
+  <circle cx="248" cy="268" r="116" fill="#B2E248"/>
+
+  <!-- segment spokes -->
+  <g stroke="#F4FBE9" stroke-width="9" stroke-linecap="round">
+    <line x1="132" y1="268" x2="364" y2="268"/>
+    <line x1="248" y1="152" x2="248" y2="384"/>
+    <line x1="166" y1="186" x2="330" y2="350"/>
+    <line x1="166" y1="350" x2="330" y2="186"/>
+  </g>
+
+  <!-- stem and leaf -->
+  <line x1="248" y1="118" x2="248" y2="86" stroke="#82C91E" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 248 92 C 280 46 336 50 344 88 C 312 116 272 112 248 92 Z" fill="#82C91E"/>
+
+  <!-- blocked ad badge -->
+  <circle cx="384" cy="386" r="58" fill="#FAFFF5"/>
+  <text x="384" y="386" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="800"
+        fill="#1B4332" text-anchor="middle" dominant-baseline="central">AD</text>
+  <line x1="332" y1="334" x2="436" y2="438" stroke="#E03131" stroke-width="16" stroke-linecap="round"/>
+</svg>
