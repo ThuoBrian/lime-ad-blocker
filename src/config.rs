@@ -317,8 +317,8 @@ mod tests {
     fn default_has_stevenblack_source() {
         let cfg = Config::default();
         assert_eq!(cfg.sources, vec![DEFAULT_SOURCE.to_string()]);
-        assert!(cfg.allowlist.is_empty());
-        assert!(cfg.custom_blocks.is_empty());
+        assert_eq!(cfg.allowlist, Vec::<String>::new());
+        assert_eq!(cfg.custom_blocks, Vec::<String>::new());
     }
 
     #[test]
@@ -424,8 +424,8 @@ mod tests {
         cfg.add_block("bad.com").unwrap();
         cfg.remove_allow("GOOD.com").unwrap();
         cfg.remove_block("bad.com.").unwrap();
-        assert!(cfg.allowlist.is_empty());
-        assert!(cfg.custom_blocks.is_empty());
+        assert_eq!(cfg.allowlist, Vec::<String>::new());
+        assert_eq!(cfg.custom_blocks, Vec::<String>::new());
     }
 
     #[test]

@@ -357,7 +357,7 @@ mod tests {
             MarkerState::Present(s) => {
                 assert!(s.before.contains("localhost"));
                 assert!(s.block.contains("evil.com"));
-                assert!(s.after.is_empty());
+                assert_eq!(s.after, "");
             }
             MarkerState::Absent => panic!("expected Present"),
         }
