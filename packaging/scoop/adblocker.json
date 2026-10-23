@@ -1,0 +1,30 @@
+{
+    "version": "0.1.0",
+    "description": "Lime: hosts-file ad blocker for macOS, Windows, and Linux",
+    "homepage": "https://github.com/ThuoBrian/lime-ad-blocker",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/ThuoBrian/lime-ad-blocker/releases/download/v0.1.0/adblocker-v0.1.0-x86_64-pc-windows-msvc.zip",
+            "hash": "REPLACE_WITH_SHA256",
+            "extract_dir": "adblocker-v0.1.0-x86_64-pc-windows-msvc"
+        }
+    },
+    "bin": "adblocker.exe",
+    "notes": [
+        "Run 'adblocker update', then 'adblocker apply' from an Administrator terminal.",
+        "Daily refresh: run scripts\\install-schedule.ps1 from $dir as Administrator."
+    ],
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/ThuoBrian/lime-ad-blocker/releases/download/v$version/adblocker-v$version-x86_64-pc-windows-msvc.zip",
+                "hash": {
+                    "url": "$url.sha256"
+                },
+                "extract_dir": "adblocker-v$version-x86_64-pc-windows-msvc"
+            }
+        }
+    }
+}
