@@ -393,6 +393,8 @@ CI runs fmt, clippy, and the test suite on macOS, Windows, and Linux for every
 push and pull request. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the tool
 is built and [RELEASING.md](RELEASING.md) for how releases are cut.
 
+Want to help? See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Credits
 
 Blocklist: [StevenBlack/hosts](https://github.com/StevenBlack/hosts), MIT
