@@ -1,0 +1,4 @@
+# BEGIN AD-BLOCKER
+0.0.0.0 evil.example.com
+# END AD-BLOCKER
+# END AD-BLOCKER

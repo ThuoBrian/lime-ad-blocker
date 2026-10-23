@@ -1,0 +1,5 @@
+/target
+# Cargo.lock IS committed (this is a binary crate).
+
+# macOS
+.DS_Store

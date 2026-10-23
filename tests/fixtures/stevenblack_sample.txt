@@ -1,0 +1,18 @@
+# Title: StevenBlack/hosts
+#
+# This hosts file is a merged collection of hosts from reputable sources
+#
+# Number of unique domains: 71,492
+#
+127.0.0.1 localhost
+127.0.0.1 localhost.localdomain
+255.255.255.255 broadcasthost
+::1 localhost
+0.0.0.0 0.0.0.0
+
+# Start StevenBlack
+
+0.0.0.0 ad-assets.futurecdn.net
+0.0.0.0 ads.google.com
+0.0.0.0 analytics.example.com # inline comment
+0.0.0.0 doubleclick.net

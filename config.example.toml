@@ -1,0 +1,16 @@
+# adblocker configuration.
+# Copy to ~/Library/Application Support/adblocker/config.toml and edit.
+# The file is created with these defaults on first run if absent.
+
+# Blocklist sources. Each must be an HTTPS URL returning a hosts-format file.
+# Lines must map a domain to 0.0.0.0 or 127.0.0.1; everything else is ignored.
+sources = [
+    "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+]
+
+# Domains you never want blocked. These are subtracted from the merged list
+# before anything is written to /etc/hosts.
+allowlist = []
+
+# Domains you want blocked in addition to the sources above.
+custom_blocks = []

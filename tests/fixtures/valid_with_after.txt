@@ -1,0 +1,5 @@
+127.0.0.1 localhost
+# BEGIN AD-BLOCKER
+0.0.0.0 evil.example.com
+# END AD-BLOCKER
+10.0.0.1 myhost.local

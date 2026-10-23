@@ -1,0 +1,10 @@
+0.0.0.0 ads.example.com
+0.0.0.0 tracker.example.org
+0.0.0.0 analytics.example.net
+0.0.0.0 banners.example.com
+0.0.0.0 popups.example.org
+0.0.0.0 metrics.example.net
+0.0.0.0 telemetry.example.com
+0.0.0.0 adservers.example.org
+0.0.0.0 malverts.example.net
+0.0.0.0 spy.example.com

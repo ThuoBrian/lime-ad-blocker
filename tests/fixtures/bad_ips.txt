@@ -1,0 +1,5 @@
+8.8.8.8 dns.example.com
+192.168.1.1 router.example.com
+::1 evil.example.com
+10.0.0.1 internal.example.com
+0.0.0.0 good.example.com

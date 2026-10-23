@@ -1,0 +1,7 @@
+0.0.0.0 -evil.com
+0.0.0.0 evil-.com
+0.0.0.0 *.wildcard.com
+0.0.0.0 under_score.com
+0.0.0.0 localhost
+0.0.0.0 0.0.0.0
+0.0.0.0 évïl.com

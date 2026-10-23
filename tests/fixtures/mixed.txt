@@ -1,0 +1,9 @@
+# Mixed content: good, bad, comments, blanks
+0.0.0.0 good1.example.com
+
+8.8.8.8 badip.example.com
+0.0.0.0 -baddomain.com
+# a comment
+0.0.0.0 good2.example.com
+0.0.0.0 0.0.0.0
+0.0.0.0 good1.example.com
