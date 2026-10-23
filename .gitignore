@@ -1,5 +1,25 @@
-/target
+# Rust build artifacts
 # Cargo.lock IS committed (this is a binary crate).
+/target
+*.pdb
+*.rs.bk
+
+# Coverage / test corpora
+/coverage
+/tarpaulin-report.html
+proptest-regressions/
+
+# Env files
+.env
+.env.*
 
 # macOS
 .DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Scratch
+initial-prompt/
