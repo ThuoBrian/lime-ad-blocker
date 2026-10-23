@@ -14,13 +14,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOME_DIR="$HOME"
-ADBLOCKER="$HOME_DIR/.cargo/bin/adblocker"
+# Wherever it was installed (cargo, Homebrew, or a release download on PATH).
+ADBLOCKER="$(command -v adblocker || echo "$HOME_DIR/.cargo/bin/adblocker")"
 APP_DIR="$HOME_DIR/Library/Application Support/adblocker"
 LAUNCH_DIR="$HOME_DIR/Library/LaunchAgents"
 LABEL="local.adblocker.update"
 
 if [ ! -x "$ADBLOCKER" ]; then
-    echo "error: $ADBLOCKER not found. Run 'just install' first." >&2
+    echo "error: adblocker not found on PATH or in ~/.cargo/bin. Run 'just install' first." >&2
     exit 1
 fi
 
@@ -33,7 +34,7 @@ cp "$SCRIPT_DIR/refresh-and-apply.sh" "$APP_DIR/refresh-and-apply.sh"
 chmod +x "$APP_DIR/refresh-and-apply.sh"
 
 # 2. Generate the plist from the template.
-sed "s|__HOME__|$HOME_DIR|g" \
+sed -e "s|__HOME__|$HOME_DIR|g" -e "s|__ADBLOCKER__|$ADBLOCKER|g" \
     "$SCRIPT_DIR/local.adblocker.update.plist" \
     > "$LAUNCH_DIR/local.adblocker.update.plist"
 
