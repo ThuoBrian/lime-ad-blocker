@@ -30,9 +30,7 @@ use config::Config;
 pub struct Blocklist {
     pub domains: Vec<String>,
     pub total_sources: usize,
-    pub total_accepted: usize,
     pub total_rejected: usize,
-    pub total_after_merge: usize,
 }
 
 /// A source that could not be refreshed, so its last good copy was used.
@@ -64,7 +62,7 @@ pub struct StatusReport {
     pub enabled: bool,
     /// Entries currently between the markers in the hosts file.
     pub hosts_domain_count: usize,
-    pub cache_present: bool,
+    /// `None` when there is no usable cache yet.
     pub cache_domain_count: Option<usize>,
     pub sources: Vec<String>,
     /// When a source was last downloaded successfully.
@@ -117,14 +115,12 @@ pub fn merge_blocklist(
     allowlist: &[String],
 ) -> Result<Blocklist> {
     let mut all: BTreeSet<String> = BTreeSet::new();
-    let mut total_accepted = 0usize;
     let mut total_rejected = 0usize;
 
     for list in parsed {
         for d in &list.domains {
             all.insert(d.clone());
         }
-        total_accepted += list.stats.accepted;
         total_rejected += list.stats.rejected_blank
             + list.stats.rejected_comment
             + list.stats.rejected_bad_ip
@@ -150,13 +146,10 @@ pub fn merge_blocklist(
         return Err(AdBlockerError::EmptyBlocklist);
     }
 
-    let total_after_merge = all.len();
     Ok(Blocklist {
         domains: all.into_iter().collect(),
         total_sources: parsed.len(),
-        total_accepted,
         total_rejected,
-        total_after_merge,
     })
 }
 
@@ -290,17 +283,9 @@ pub fn rebuild_cache(paths: &Paths) -> Result<Rebuild> {
 /// The hosts file split into sections; a file without markers becomes all
 /// `before`.
 fn current_sections(hosts_path: &Path) -> Result<hosts::HostsSections> {
-    Ok(match hosts::read_hosts(hosts_path)? {
-        hosts::MarkerState::Absent => {
-            hosts::sections_from_unmarked(&std::fs::read_to_string(hosts_path).map_err(|e| {
-                AdBlockerError::Io {
-                    path: hosts_path.display().to_string(),
-                    source: e,
-                }
-            })?)
-        }
-        hosts::MarkerState::Present(s) => s,
-    })
+    match hosts::read_hosts(hosts_path)? {
+        hosts::MarkerState::Absent(s) | hosts::MarkerState::Present(s) => Ok(s),
+    }
 }
 
 /// Run `apply`: re-read the cache and write it into the hosts file. Requires
@@ -336,7 +321,7 @@ pub fn apply_no_flush(paths: &Paths) -> Result<ApplyReport> {
     hosts::backup(&paths.hosts)?;
     let domains: Vec<String> = set.into_iter().collect();
     let content = hosts::build_hosts_content(&sections, &domains);
-    hosts::write_hosts_atomic_no_flush(&paths.hosts, &content)?;
+    hosts::write_hosts_atomic(&paths.hosts, &content)?;
 
     Ok(ApplyReport {
         applied: domains.len(),
@@ -355,11 +340,14 @@ pub fn run_disable(paths: &Paths) -> Result<()> {
 
 /// The work of `disable`, without the privilege check or DNS flush.
 pub fn disable_no_flush(paths: &Paths) -> Result<()> {
-    if matches!(hosts::read_hosts(&paths.hosts)?, hosts::MarkerState::Absent) {
+    if matches!(
+        hosts::read_hosts(&paths.hosts)?,
+        hosts::MarkerState::Absent(_)
+    ) {
         return Err(AdBlockerError::NotEnabled("disable"));
     }
     hosts::backup(&paths.hosts)?;
-    hosts::remove_block_no_flush(&paths.hosts)
+    hosts::remove_block(&paths.hosts)
 }
 
 /// Run `pause`: remove the block, wait `duration` (or until `stop` is set,
@@ -378,7 +366,10 @@ pub fn pause_with(
     stop: &AtomicBool,
     flush: impl Fn(),
 ) -> Result<ApplyReport> {
-    if matches!(hosts::read_hosts(&paths.hosts)?, hosts::MarkerState::Absent) {
+    if matches!(
+        hosts::read_hosts(&paths.hosts)?,
+        hosts::MarkerState::Absent(_)
+    ) {
         return Err(AdBlockerError::NotEnabled("pause"));
     }
     // Make sure there is something to re-apply before turning blocking off.
@@ -434,7 +425,7 @@ pub fn restore_no_flush(paths: &Paths) -> Result<()> {
         return Err(e);
     }
     hosts::backup(&paths.hosts)?;
-    hosts::write_hosts_atomic_no_flush(&paths.hosts, &previous)
+    hosts::write_hosts_atomic(&paths.hosts, &previous)
 }
 
 /// Run `status`: report on/off, domain counts, cache state, last update, and
@@ -446,9 +437,9 @@ pub fn run_status(paths: &Paths) -> Result<StatusReport> {
         hosts::MarkerState::Present(_)
     );
 
-    let (cache_present, cache_domain_count) = match config::read_cache_from(&paths.cache()) {
-        Ok(d) => (true, Some(d.len())),
-        Err(AdBlockerError::Io { .. } | AdBlockerError::EmptyBlocklist) => (false, None),
+    let cache_domain_count = match config::read_cache_from(&paths.cache()) {
+        Ok(d) => Some(d.len()),
+        Err(AdBlockerError::Io { .. } | AdBlockerError::EmptyBlocklist) => None,
         Err(e) => return Err(e),
     };
 
@@ -465,7 +456,6 @@ pub fn run_status(paths: &Paths) -> Result<StatusReport> {
     Ok(StatusReport {
         enabled,
         hosts_domain_count: hosts::count_blocked_in_hosts(&paths.hosts),
-        cache_present,
         cache_domain_count,
         sources: cfg.sources,
         last_update,
@@ -590,7 +580,7 @@ pub fn uninstall_no_flush(paths: &Paths, yes: bool) -> Result<UninstallReport> {
 
     if yes {
         if block_present {
-            hosts::remove_block_no_flush(&paths.hosts)?;
+            hosts::remove_block(&paths.hosts)?;
         }
         for file in backup.iter().chain(&app_files) {
             std::fs::remove_file(file).map_err(|e| AdBlockerError::Io {
@@ -656,7 +646,6 @@ pub fn require_root(command: &str, hosts_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
     use validate::ParsedList;
 
     fn parsed(domains: &[&str]) -> ParsedList {
@@ -673,7 +662,6 @@ mod tests {
         let lists = vec![parsed(&["a.com", "b.com"]), parsed(&["b.com", "c.com"])];
         let m = merge_blocklist(&lists, &[], &[]).unwrap();
         assert_eq!(m.domains, vec!["a.com", "b.com", "c.com"]);
-        assert_eq!(m.total_after_merge, 3);
     }
 
     #[test]
@@ -742,18 +730,5 @@ mod tests {
     fn merge_rejects_invalid_custom_block() {
         let lists = vec![parsed(&["evil.com"])];
         assert!(merge_blocklist(&lists, &["bad domain".to_string()], &[]).is_err());
-    }
-
-    #[test]
-    fn btree_set_dedups_and_sorts() {
-        // Sanity check the underlying structure behaviour.
-        let mut s = BTreeSet::new();
-        for d in ["c.com", "a.com", "a.com", "b.com"] {
-            s.insert(d.to_string());
-        }
-        assert_eq!(
-            s.into_iter().collect::<Vec<_>>(),
-            vec!["a.com", "b.com", "c.com"]
-        );
     }
 }

@@ -31,8 +31,9 @@ impl HostsSections {
 /// Marker state discovered while reading a hosts file.
 #[derive(Debug)]
 pub enum MarkerState {
-    /// No markers present (fresh install, or already disabled).
-    Absent,
+    /// No markers present (fresh install, or already disabled). All existing
+    /// content is in `before`, ready for a block to be appended.
+    Absent(HostsSections),
     /// Exactly one BEGIN and one END marker, in the right order.
     Present(HostsSections),
 }
@@ -75,7 +76,7 @@ pub fn read_hosts(path: &Path) -> Result<MarkerState> {
     }
 
     match (begin_lines.len(), end_lines.len()) {
-        (0, 0) => Ok(MarkerState::Absent),
+        (0, 0) => Ok(MarkerState::Absent(sections_from_unmarked(&content))),
         (1, 1) => {
             let begin = begin_lines[0];
             let end = end_lines[0];
@@ -144,9 +145,8 @@ pub fn sections_from_unmarked(content: &str) -> HostsSections {
 }
 
 /// Write the hosts file atomically (temp file in the same directory, then
-/// rename) with mode 0644 on Unix. Does not flush DNS — use [`write_hosts_atomic`]
-/// in production or this in tests.
-pub fn write_hosts_atomic_no_flush(path: &Path, content: &str) -> Result<()> {
+/// rename) with mode 0644 on Unix. Does not flush DNS; callers do that.
+pub fn write_hosts_atomic(path: &Path, content: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| AdBlockerError::Io {
         path: path.display().to_string(),
         source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent directory"),
@@ -221,9 +221,9 @@ pub fn backup_path(path: &Path) -> std::path::PathBuf {
 
 /// Remove the ad-blocker block, preserving everything outside the markers.
 /// Does not flush DNS.
-pub fn remove_block_no_flush(path: &Path) -> Result<()> {
+pub fn remove_block(path: &Path) -> Result<()> {
     match read_hosts(path)? {
-        MarkerState::Absent => Err(AdBlockerError::Marker(
+        MarkerState::Absent(_) => Err(AdBlockerError::Marker(
             "no ad-blocker markers found — nothing to disable".to_string(),
         )),
         MarkerState::Present(sections) => {
@@ -238,7 +238,7 @@ pub fn remove_block_no_flush(path: &Path) -> Result<()> {
                     content.push_str(eol);
                 }
             }
-            write_hosts_atomic_no_flush(path, &content)
+            write_hosts_atomic(path, &content)
         }
     }
 }
@@ -341,7 +341,7 @@ mod tests {
     fn read_no_markers() {
         let f = make_hosts("127.0.0.1 localhost\n");
         let state = read_hosts(&f).unwrap();
-        assert!(matches!(state, MarkerState::Absent));
+        assert!(matches!(state, MarkerState::Absent(_)));
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod tests {
                 assert!(s.block.contains("evil.com"));
                 assert_eq!(s.after, "");
             }
-            MarkerState::Absent => panic!("expected Present"),
+            MarkerState::Absent(_) => panic!("expected Present"),
         }
     }
 
@@ -375,7 +375,7 @@ mod tests {
         let state = read_hosts(&f).unwrap();
         match state {
             MarkerState::Present(s) => assert!(s.after.contains("# my custom entry")),
-            MarkerState::Absent => panic!("expected Present"),
+            MarkerState::Absent(_) => panic!("expected Present"),
         }
     }
 
@@ -468,13 +468,13 @@ mod tests {
             !content.replace("\r\n", "").contains('\n'),
             "bare LF in CRLF file"
         );
-        write_hosts_atomic_no_flush(&f, &content).unwrap();
+        write_hosts_atomic(&f, &content).unwrap();
 
         match read_hosts(&f).unwrap() {
             MarkerState::Present(s) => assert!(s.crlf),
-            MarkerState::Absent => panic!("expected Present"),
+            MarkerState::Absent(_) => panic!("expected Present"),
         }
-        remove_block_no_flush(&f).unwrap();
+        remove_block(&f).unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), original);
     }
 
@@ -485,8 +485,8 @@ mod tests {
         let content =
             build_hosts_content(&sections_from_unmarked(original), &["evil.com".to_string()]);
         assert!(!content.contains('\r'));
-        write_hosts_atomic_no_flush(&f, &content).unwrap();
-        remove_block_no_flush(&f).unwrap();
+        write_hosts_atomic(&f, &content).unwrap();
+        remove_block(&f).unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), original);
     }
 
@@ -496,7 +496,7 @@ mod tests {
     fn write_atomic_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hosts");
-        write_hosts_atomic_no_flush(&path, "test\n").unwrap();
+        write_hosts_atomic(&path, "test\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "test\n");
     }
 
@@ -506,7 +506,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hosts");
-        write_hosts_atomic_no_flush(&path, "test\n").unwrap();
+        write_hosts_atomic(&path, "test\n").unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o644);
     }
@@ -516,7 +516,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hosts");
         std::fs::write(&path, "old\n").unwrap();
-        write_hosts_atomic_no_flush(&path, "new\n").unwrap();
+        write_hosts_atomic(&path, "new\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
     }
 
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn remove_block_no_markers_errors() {
         let f = make_hosts("127.0.0.1 localhost\n");
-        let err = remove_block_no_flush(&f).unwrap_err();
+        let err = remove_block(&f).unwrap_err();
         assert!(err.to_string().contains("nothing to disable"), "{err}");
     }
 
@@ -537,7 +537,7 @@ mod tests {
              0.0.0.0 evil.com\n\
              # END AD-BLOCKER\n",
         );
-        remove_block_no_flush(&f).unwrap();
+        remove_block(&f).unwrap();
         let after = std::fs::read_to_string(&f).unwrap();
         assert!(after.contains("localhost"));
         assert!(!after.contains("BEGIN AD-BLOCKER"));
@@ -553,7 +553,7 @@ mod tests {
              # END AD-BLOCKER\n\
              10.0.0.1 myhost\n",
         );
-        remove_block_no_flush(&f).unwrap();
+        remove_block(&f).unwrap();
         let after = std::fs::read_to_string(&f).unwrap();
         assert!(after.contains("myhost"));
         assert!(after.contains("localhost"));

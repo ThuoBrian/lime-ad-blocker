@@ -65,9 +65,6 @@ pub enum AdBlockerError {
 
     #[error("invalid domain: {0}")]
     InvalidDomain(String),
-
-    #[error("DNS flush failed: {0}")]
-    DnsFlush(String),
 }
 
 pub type Result<T> = std::result::Result<T, AdBlockerError>;

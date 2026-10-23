@@ -72,7 +72,9 @@ fn dispatch(cli: Cli, paths: &Paths) -> adblocker::Result<()> {
             let b = &report.blocklist;
             println!(
                 "Updated: {} domains from {} source(s) ({} rejected).",
-                b.total_after_merge, b.total_sources, b.total_rejected
+                b.domains.len(),
+                b.total_sources,
+                b.total_rejected
             );
             println!("Run {APPLY_HINT} to write them to {hosts}.");
         }

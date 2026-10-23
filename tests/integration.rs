@@ -153,7 +153,7 @@ fn fixture_valid_with_after_preserves_after_section() {
             assert!(s.block.contains("evil.example.com"));
             assert!(s.after.contains("myhost.local"));
         }
-        MarkerState::Absent => panic!("expected Present"),
+        MarkerState::Absent(_) => panic!("expected Present"),
     }
 }
 
@@ -172,11 +172,10 @@ fn full_apply_then_disable_cycle() {
 
     // Apply: read sections, write block, no flush (tests never flush DNS).
     let sections = match hosts::read_hosts(&hosts_path).unwrap() {
-        MarkerState::Absent => hosts::sections_from_unmarked(&text),
-        MarkerState::Present(s) => s,
+        MarkerState::Absent(s) | MarkerState::Present(s) => s,
     };
     let content = hosts::build_hosts_content(&sections, &merged.domains);
-    hosts::write_hosts_atomic_no_flush(&hosts_path, &content).unwrap();
+    hosts::write_hosts_atomic(&hosts_path, &content).unwrap();
 
     let written = fs::read_to_string(&hosts_path).unwrap();
     assert!(written.contains(BEGIN_MARKER));
@@ -188,7 +187,7 @@ fn full_apply_then_disable_cycle() {
     assert!(written.contains("::1"));
 
     // Now disable: remove the block, defaults remain.
-    hosts::remove_block_no_flush(&hosts_path).unwrap();
+    hosts::remove_block(&hosts_path).unwrap();
     let after = fs::read_to_string(&hosts_path).unwrap();
     assert!(!after.contains(BEGIN_MARKER));
     assert!(!after.contains("ads.example.com"));
@@ -207,7 +206,7 @@ fn apply_preserves_macos_defaults() {
     let merged = merge_blocklist(&[parsed], &[], &[]).unwrap();
     let sections = hosts::sections_from_unmarked(&text);
     let content = hosts::build_hosts_content(&sections, &merged.domains);
-    hosts::write_hosts_atomic_no_flush(&hosts_path, &content).unwrap();
+    hosts::write_hosts_atomic(&hosts_path, &content).unwrap();
 
     let written = fs::read_to_string(&hosts_path).unwrap();
     // The five macOS default lines must all survive intact and above the
@@ -238,11 +237,10 @@ fn apply_is_idempotent() {
 
     let apply_once = |path: &Path| {
         let sections = match hosts::read_hosts(path).unwrap() {
-            MarkerState::Absent => hosts::sections_from_unmarked(&text),
-            MarkerState::Present(s) => s,
+            MarkerState::Absent(s) | MarkerState::Present(s) => s,
         };
         let content = hosts::build_hosts_content(&sections, &merged.domains);
-        hosts::write_hosts_atomic_no_flush(path, &content).unwrap();
+        hosts::write_hosts_atomic(path, &content).unwrap();
     };
 
     apply_once(&hosts_path);
@@ -259,7 +257,7 @@ fn allowlist_removes_domain() {
     let parsed = parse_hosts_text(&read_fixture("good_list.txt")).unwrap();
     let merged = merge_blocklist(&[parsed], &[], &["ads.example.com".to_string()]).unwrap();
     assert!(!merged.domains.contains(&"ads.example.com".to_string()));
-    assert_eq!(merged.total_after_merge, 9);
+    assert_eq!(merged.domains.len(), 9);
 }
 
 #[test]
