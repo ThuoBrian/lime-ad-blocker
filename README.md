@@ -66,6 +66,40 @@ adblocker block extra-tracker.example.com
 These edit `~/Library/Application Support/adblocker/config.toml`. Run
 `just update` then `just apply` for the change to take effect.
 
+## Scheduled refresh (optional)
+
+To keep the blocklist fresh automatically, install a daily launchd job that
+runs `adblocker update` and then `adblocker apply` at 04:17 each day:
+
+```bash
+sh scripts/install-schedule.sh
+```
+
+This copies the refresh script into
+`~/Library/Application Support/adblocker/`, generates and loads the
+LaunchAgent, and prints a one-time `sudo` command to create a passwordless
+sudoers entry restricted to **only** `adblocker apply` and `adblocker disable`
+(so the unattended job can write `/etc/hosts` without your password). Run
+that printed command, then test it:
+
+```bash
+launchctl start local.adblocker.update      # run once now
+tail -20 ~/Library/Application\ Support/adblocker/refresh.log
+```
+
+Notes:
+
+- The LaunchAgent runs in your user session, so it fires on wake/login if the
+  Mac was asleep at 04:17.
+- The sudoers entry grants passwordless root to that one binary only. The
+  `apply` path is constrained to writing `0.0.0.0 <domain>` lines between
+  the markers, so the realistic worst case is "block domains of an
+  attacker's choosing," not arbitrary execution. Don't let another process
+  replace `~/.cargo/bin/adblocker`.
+- Uninstall with `sh scripts/uninstall-schedule.sh` (and `sudo rm
+  /etc/sudoers.d/adblocker` to remove the sudoers entry). Your `/etc/hosts`
+  block and cache are left in place.
+
 ## Verify it works
 
 After `just apply`:
