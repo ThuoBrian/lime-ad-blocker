@@ -4,101 +4,131 @@
 
 # Lime
 
-A command-line ad blocker for macOS, Windows, and Linux that manages the
-system hosts file. It downloads the
-[StevenBlack unified hosts](https://github.com/StevenBlack/hosts) blocklist,
-validates it, and writes it into the hosts file between markers so ad and
-tracker domains resolve to `0.0.0.0`. That blocks ads in every browser and
-app on your computer, not just one.
+A command-line ad blocker for macOS, Windows, and Linux. It blocks ads and
+trackers in every browser and app on your computer, not just one, by managing
+the system hosts file.
 
-No GUI, no background services. One Rust binary (called `adblocker`), driven
-by a [Justfile](https://github.com/casey/just).
+No GUI, no background services. One Rust binary (called `adblocker`), with an
+optional [Justfile](https://github.com/casey/just) for shortcuts.
 
-## Requirements
+## How it works
 
-- macOS (tested on Sequoia 15.7), Windows 10/11, or Linux
-- To build from source: [Rust](https://www.rust-lang.org/) 1.88+ (stable, via
-  rustup)
-- Optional: [`just`](https://github.com/casey/just) for the shortcuts below
-  (`brew install just` on macOS, `winget install Casey.Just` on Windows)
+Before your computer asks a DNS server where a website lives, it checks the
+hosts file. If that file says `0.0.0.0 ads.example.com`, every request for
+`ads.example.com` goes nowhere.
+
+Lime downloads the [StevenBlack unified hosts](https://github.com/StevenBlack/hosts)
+list (about 71,000 ad and tracker domains), checks every line, and writes the
+domains into your hosts file between two markers:
+
+```text
+# BEGIN AD-BLOCKER
+0.0.0.0 ads.example.com
+0.0.0.0 tracker.example.org
+...
+# END AD-BLOCKER
+```
+
+Everything outside the markers is left alone. The work is split in two:
+downloading and checking the list runs as your normal user, and only the step
+that writes the hosts file needs admin rights.
 
 ## Install
 
-**Prebuilt:** download the archive for your platform from
-[Releases](https://github.com/ThuoBrian/lime-ad-blocker/releases), check it
-against its `.sha256` file, and put `adblocker` (or `adblocker.exe`) somewhere
-on your `PATH`.
+**Prebuilt:** binaries for macOS, Windows, and Linux are attached to each
+[GitHub Release](https://github.com/ThuoBrian/lime-ad-blocker/releases) (the
+first one hasn't been published yet). Download the archive for your platform,
+check it against its `.sha256` file, and put `adblocker` (or `adblocker.exe`)
+somewhere on your `PATH`.
 
-**From source:**
+**From source** (needs [Rust](https://www.rust-lang.org/) 1.88 or newer):
 
 ```bash
 git clone https://github.com/ThuoBrian/lime-ad-blocker.git
 cd lime-ad-blocker
-just install
+cargo install --path .      # or: just install
 ```
 
-`just install` runs `cargo install --path .`, putting the `adblocker` binary
-in `~/.cargo/bin` (`%USERPROFILE%\.cargo\bin` on Windows; make sure that's on
-your `PATH`).
+This puts the binary in `~/.cargo/bin` (`%USERPROFILE%\.cargo\bin` on
+Windows). Check it's on your `PATH` with `adblocker --version`.
 
-The sections below use macOS commands. On Windows, see
-[Using Lime on Windows](#using-lime-on-windows); on Linux, see
-[Using Lime on Linux](#using-lime-on-linux).
+## Quick start
 
-## Usage
+Some commands change the hosts file and need admin rights. On macOS and Linux,
+put `sudo` in front of them. On Windows, run them from an **Administrator**
+terminal (right-click Terminal, then *Run as administrator*). If you've turned
+on *Sudo for Windows* (Settings → System → For developers), `sudo` works there
+too. The examples below use the macOS and Linux form.
 
-The four main commands:
-
-```bash
-# Download, validate, and cache the blocklist. Runs as your normal user.
-just update
-
-# Write the cached blocklist into /etc/hosts. Needs sudo.
-just apply
-
-# Remove the ad-blocker block from /etc/hosts. Needs sudo.
-just disable
-
-# Show whether blocking is on, domain counts, last update, and your sources.
-just status
-```
-
-You can also call the binary directly:
+**1. Download the blocklist.** Normal terminal, no admin needed:
 
 ```bash
 adblocker update
+```
+
+```text
+Updated: 71491 domains from 1 source(s) (6825 rejected).
+```
+
+Lime fetches the list over HTTPS, drops any line that isn't a valid
+`0.0.0.0 domain` entry, removes anything you've allowlisted or that's
+protected (see [What Lime never blocks](#what-lime-never-blocks)), and saves
+the result as a cache. Nothing on your system has changed yet.
+
+**2. Turn blocking on.** Needs admin:
+
+```bash
 sudo adblocker apply
-sudo adblocker disable
+```
+
+Lime checks the cache again, backs up your current hosts file, writes the
+block between the markers, and flushes the DNS cache so it takes effect right
+away.
+
+**3. Check it's working.**
+
+```bash
 adblocker status
 ```
 
-If a source can't be downloaded, `update` uses that source's last good copy
-and prints a warning. If the new list is less than half the size of the
-current one, `update` refuses it, because that usually means the upstream
-list is broken. Run `adblocker update --force` if the drop is expected (for
-example, you removed a source).
+You should see `Blocking: on` and about 71,000 domains in the hosts file. To
+test a single domain, `adblocker check doubleclick.net` tells you whether it's
+blocked and why.
 
-### When a site breaks
+That's it. To keep the list fresh, set up the
+[daily refresh](#daily-refresh).
+
+## When a site breaks
+
+Find out why a domain is blocked:
 
 ```bash
-# Why is this domain blocked (or not)? Shows which source lists it and
-# whether it's allowlisted, a custom block, or protected.
 adblocker check cdn.some-site.example.com
+```
 
-# Never block it, or any of its subdomains.
+It shows which source lists the domain and whether it's on your allowlist, a
+custom block, or protected. If it's blocking something you need, allowlist it
+and re-apply:
+
+```bash
 adblocker allow some-site.example.com
 sudo adblocker apply
+```
 
-# Or switch blocking off for a while. It turns itself back on when the time
-# is up, or when you press Ctrl-C.
+Allowing a domain also allows its subdomains, so `allow example.com` unblocks
+`ads.example.com` too. `allow` rebuilds the cache from the last download, so
+you don't need another `update`.
+
+To switch blocking off for a while instead, say to finish a checkout:
+
+```bash
 sudo adblocker pause 15m
 ```
 
-`allow` and `block` rebuild the cache from the last download, so you only
-need `apply` afterwards, not another `update`. Allowing a domain also allows
-its subdomains: `allow example.com` unblocks `ads.example.com` too.
+Blocking turns back on when the time is up, or as soon as you press Ctrl-C or
+close the terminal. Durations use `s`, `m`, or `h`, up to `24h`.
 
-### Managing your lists
+## Managing your lists
 
 ```bash
 adblocker list                               # sources, allowlist, custom blocks
@@ -107,77 +137,20 @@ adblocker unblock extra-tracker.example.com
 adblocker unallow some-site.example.com
 ```
 
-These edit `config.toml` in your app directory (see
-[Configuration](#configuration)).
-
-## Scheduled refresh (optional)
-
-To keep the blocklist fresh automatically, install a daily launchd job that
-runs `adblocker update` and then `adblocker apply` at 04:17 each day:
-
-```bash
-sh scripts/install-schedule.sh
-```
-
-This copies the refresh script into
-`~/Library/Application Support/adblocker/`, generates and loads the
-LaunchAgent, and prints a one-time `sudo` command to create a passwordless
-sudoers entry restricted to only `adblocker apply` and `adblocker disable`
-(so the unattended job can write `/etc/hosts` without your password). Run
-that printed command, then test it:
-
-```bash
-launchctl start local.adblocker.update      # run once now
-tail -20 ~/Library/Application\ Support/adblocker/refresh.log
-```
-
-Notes:
-
-- The LaunchAgent runs in your user session, so it fires on wake/login if the
-  Mac was asleep at 04:17.
-- The sudoers entry grants passwordless root to that one binary only. The
-  `apply` path is constrained to writing `0.0.0.0 <domain>` lines between
-  the markers, so the realistic worst case is "block domains of an
-  attacker's choosing," not arbitrary execution. Don't let another process
-  replace `~/.cargo/bin/adblocker`.
-- The cache that `apply` reads is in your user folder, so anything running
-  as you can change it. `apply` still only writes valid `0.0.0.0 <domain>`
-  lines and never protected domains, so the worst case is again "domains
-  blocked that you didn't choose."
-- The refresh log keeps only its last 1,000 lines.
-- Uninstall with `sh scripts/uninstall-schedule.sh` (and `sudo rm
-  /etc/sudoers.d/adblocker` to remove the sudoers entry). Your `/etc/hosts`
-  block and cache are left in place.
-
-## Verify it works
-
-After `just apply`:
-
-```bash
-# The block should be between the markers.
-grep -c "0.0.0.0" /etc/hosts
-
-# A blocked domain should resolve to 0.0.0.0.
-dscacheutil -q host -a name some-ad-domain.example.com
-
-# A protected domain (Apple update) should still resolve correctly.
-dig swscan.apple.com
-```
+Like `allow`, these rebuild the cache straight away, so follow them with
+`sudo adblocker apply`.
 
 ## Undo and uninstall
 
 ```bash
-# Remove the ad-blocker block, leaving your other /etc/hosts entries intact.
-just disable
+sudo adblocker disable     # remove Lime's block, keep your other entries
+sudo adblocker restore     # undo the last change; run it again to redo
 ```
 
 Before every change (`apply`, `disable`, `pause`, `restore`), Lime copies the
-hosts file to `/etc/hosts.adblocker-backup`. If a change goes wrong, or
-something else mangles the markers, undo the last change:
-
-```bash
-sudo adblocker restore      # run it again to redo
-```
+hosts file to `hosts.adblocker-backup` in the same folder. `restore` swaps that
+copy back in. That also gets you out of trouble if something else mangles the
+markers, which makes Lime refuse to edit the file.
 
 To remove Lime completely:
 
@@ -186,136 +159,149 @@ adblocker uninstall               # shows what would be removed
 sudo adblocker uninstall --yes    # removes the block, the backup, and Lime's data
 ```
 
-`uninstall` only deletes files it knows it created. It then tells you what's
-left to remove yourself: the daily refresh and the binary.
+`uninstall` only deletes files it knows it created, then tells you what's left
+to remove yourself: the daily refresh and the binary.
 
-## Using Lime on Windows
+## Keeping the list fresh
 
-Lime works the same way on Windows. The differences:
+`update` keeps you safe from a bad download in two ways:
 
-| | macOS | Windows |
-| --- | --- | --- |
-| Hosts file | `/etc/hosts` | `C:\Windows\System32\drivers\etc\hosts` |
-| Config and cache | `~/Library/Application Support/adblocker/` | `%APPDATA%\adblocker\` |
-| Elevation for `apply`, `disable`, `pause`, `restore` | `sudo` | An Administrator terminal |
-| DNS flush | `dscacheutil` + `mDNSResponder` | `ipconfig /flushdns` |
-| Daily refresh | launchd | Task Scheduler |
-
-Run `update`, `status`, `check`, `list`, `allow` and `block` in a normal
-terminal. Run `apply`, `disable`, `pause` and `restore` from an
-**Administrator** terminal (right-click Terminal → *Run as administrator*). If you've turned on *Sudo for Windows* (Settings → System
-→ For developers), `sudo adblocker apply` works from a normal terminal too.
-
-```powershell
-adblocker update           # normal terminal
-adblocker apply            # Administrator terminal
-adblocker status
-```
-
-Run `apply` and `disable` as the same Windows account you used for `update`.
-The cache lives under that account's `%APPDATA%`, so if you elevate with a
-different admin account, `apply` won't find it. If you have to elevate as a
-different account, set `ADBLOCKER_DIR` to the first account's
-`%APPDATA%\adblocker` in the elevated terminal.
-
-Lime keeps the hosts file's existing Windows (CRLF) line endings.
+- If a source can't be downloaded, Lime uses that source's last good copy and
+  prints a warning.
+- If the new list is less than half the size of the current one, `update`
+  refuses it, because that usually means the upstream list is broken. Run
+  `adblocker update --force` if the drop is expected, for example after
+  removing a source.
 
 ### Daily refresh
 
-From an Administrator PowerShell in the repo:
+Each platform has its own way to run `update` then `apply` every day at 04:17.
+In each case the log keeps only its last 1,000 lines.
+
+**macOS** uses a LaunchAgent:
+
+```bash
+sh scripts/install-schedule.sh
+```
+
+The script installs the job and prints a one-time `sudo` command that creates a
+sudoers entry allowing only `adblocker apply` and `adblocker disable` to run
+without a password. Run that command, then test the job:
+
+```bash
+launchctl start local.adblocker.update
+tail -20 ~/Library/Application\ Support/adblocker/refresh.log
+```
+
+The job runs in your user session, so if the Mac was asleep at 04:17 it runs
+on wake. Remove it with `sh scripts/uninstall-schedule.sh` and
+`sudo rm /etc/sudoers.d/adblocker`.
+
+**Windows** uses Task Scheduler. From an Administrator PowerShell in the repo:
 
 ```powershell
 just schedule
 # or: powershell -ExecutionPolicy Bypass -File scripts\windows\install-schedule.ps1
 ```
 
-This registers an `adblocker-update` task that runs `adblocker update` and then
-`adblocker apply` daily at 04:17. It runs as you, with highest privileges,
-while you're logged on. If the PC was off at 04:17, it runs at the next chance.
-No password is stored and no sudoers-style setup is needed. As on macOS, the
-elevated task applies a cache that your normal account can write. `apply`
-only ever writes valid, non-protected `0.0.0.0` lines, so the worst case is
-"domains blocked that you didn't choose." Test it and read the log (it keeps
-the last 1,000 lines):
+The `adblocker-update` task runs as you, with highest privileges, while you're
+logged on. If the PC was off at 04:17, it runs at the next chance. No password
+is stored. Test it:
 
 ```powershell
 Start-ScheduledTask -TaskName adblocker-update
 Get-Content "$env:APPDATA\adblocker\refresh.log" -Tail 20
 ```
 
-Uninstall with `scripts\windows\uninstall-schedule.ps1` (as Administrator).
+Remove it with `scripts\windows\uninstall-schedule.ps1` (as Administrator).
 
-### Verify and undo on Windows
+**Linux** has no installer yet. Add a root cron entry such as:
 
-```powershell
-Resolve-DnsName some-ad-domain.example.com   # should return 0.0.0.0
-adblocker disable                            # Administrator terminal
-adblocker restore                            # Administrator: undo the last change
+```cron
+17 4 * * * runuser -u YOUR_USER -- /home/YOUR_USER/.cargo/bin/adblocker update && /home/YOUR_USER/.cargo/bin/adblocker apply
 ```
 
-The rolling backup is
-`C:\Windows\System32\drivers\etc\hosts.adblocker-backup`.
+**What the scheduled job can and can't do.** On macOS and Windows the job
+applies a cache that your normal account can write, using admin rights it
+doesn't ask for each time. That sounds risky, but `apply` only ever writes
+valid `0.0.0.0 <domain>` lines and never touches protected domains. The worst
+someone with access to your account could do is get domains blocked that you
+didn't choose. Don't let other software replace the `adblocker` binary itself.
 
-### Microsoft Defender
+## Platform notes
 
-Defender watches the hosts file. It flags hosts files that redirect certain
-Microsoft domains as `SettingsModifier:Win32/HostsFileHijack` and may quarantine
-or revert them. Lime never blocks Windows Update, activation, Microsoft sign-in
-or Defender's own update domains (see `PROTECTED_DOMAINS` in
-`src/validate.rs`). If Defender still flags the file, it's usually because of a
-Microsoft domain you added with `adblocker block`. Remove that entry, or allow
-the detection in Windows Security only if you're sure.
+| | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Hosts file | `/etc/hosts` | `C:\Windows\System32\drivers\etc\hosts` | `/etc/hosts` |
+| Lime's files | `~/Library/Application Support/adblocker/` | `%APPDATA%\adblocker\` | `~/.config/adblocker/` |
+| Admin rights | `sudo` | Administrator terminal | `sudo` |
+| DNS flush | `dscacheutil` + `mDNSResponder` | `ipconfig /flushdns` | `resolvectl flush-caches` |
 
-## Using Lime on Linux
+**Windows:**
 
-The commands are the same as on macOS:
+- Run `apply` as the same Windows account you used for `update`, because the
+  cache lives under that account's `%APPDATA%`. If you have to elevate as a
+  different account, set `ADBLOCKER_DIR` to the first account's
+  `%APPDATA%\adblocker` in the elevated terminal.
+- Lime keeps the hosts file's Windows (CRLF) line endings.
+- Microsoft Defender flags hosts files that redirect certain Microsoft domains
+  (`SettingsModifier:Win32/HostsFileHijack`) and may revert them. Lime never
+  blocks Windows Update, activation, Microsoft sign-in, or Defender's update
+  domains. If Defender still flags the file, check for a Microsoft domain you
+  added with `adblocker block`.
 
-```bash
-adblocker update
-sudo adblocker apply
-```
+**Linux:**
 
-- **Files:** config and cache live in `~/.config/adblocker/` (or
-  `$XDG_CONFIG_HOME/adblocker/`). Most distros reset `HOME` under `sudo`, so
-  when run with sudo, Lime looks up your real home in `/etc/passwd` and uses
-  the same files `update` wrote.
-- **DNS:** Lime flushes the cache with `resolvectl flush-caches` when
-  systemd-resolved is present. Without it there's usually no local cache to
-  flush.
-- **Daily refresh:** there's no installer yet. Add a root cron entry such as:
-
-  ```cron
-  17 4 * * * runuser -u YOUR_USER -- /home/YOUR_USER/.cargo/bin/adblocker update && /home/YOUR_USER/.cargo/bin/adblocker apply
-  ```
+- Most distros reset `HOME` under `sudo`, so Lime looks up your real home in
+  `/etc/passwd` and uses the same files `update` wrote. `$XDG_CONFIG_HOME` is
+  respected.
+- The DNS flush only runs if systemd-resolved is present. Without it there's
+  usually no local cache to flush.
 
 ## Configuration
 
-Copy [`config.example.toml`](config.example.toml) to `config.toml` in your app
-directory, or let `adblocker` create it for you on first run:
+Lime creates `config.toml` in its folder (see the table above) on first run.
+[`config.example.toml`](config.example.toml) shows the format. It holds:
 
-| OS | App directory |
-| --- | --- |
-| macOS | `~/Library/Application Support/adblocker/` |
-| Windows | `%APPDATA%\adblocker\` |
-| Linux | `~/.config/adblocker/` |
+- `sources`: blocklist URLs. Each must be `https://` and serve a hosts-format
+  file.
+- `allowlist`: domains (and their subdomains) never to block. Managed with
+  `allow` and `unallow`.
+- `custom_blocks`: extra domains to block. Managed with `block` and `unblock`.
 
-Set `ADBLOCKER_DIR` to use a different directory. Use `config.toml` to change
-the blocklist `sources`, add an `allowlist`, or add `custom_blocks`. Sources
-must be `https://` URLs. The host of every source is never blocked, so a list
-can't block its own updates. The app directory also holds `blocklist.cache`
-and `sources/*.list`, the last good copy of each source.
+Set `ADBLOCKER_DIR` to keep Lime's files somewhere else. Besides the config,
+the folder holds `blocklist.cache` and `sources/*.list`, the last good copy of
+each source.
 
-## Development
+### What Lime never blocks
 
-```bash
-just test   # cargo test
-just lint   # cargo fmt --check + cargo clippy -D warnings
-just build
-```
+Some domains are protected because blocking them breaks the system: Apple
+software update, activation, App Store and iCloud, and Microsoft's Windows
+Update, activation, sign-in, and Defender domains. Each entry also covers its
+subdomains. The host of every source in your config is protected too, so a
+list can't block its own updates. The full list is `PROTECTED_DOMAINS` in
+[`src/validate.rs`](src/validate.rs).
 
-CI runs fmt, clippy and the test suite on macOS, Windows and Linux for every
-push and pull request. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the tool
-is built and [RELEASING.md](RELEASING.md) for how releases are cut.
+## Command reference
+
+| Command | Admin | What it does |
+| --- | --- | --- |
+| `update [--force]` | | Download, check, and cache the blocklist |
+| `apply` | yes | Write the cached blocklist into the hosts file |
+| `disable` | yes | Remove Lime's block from the hosts file |
+| `pause <duration>` | yes | Turn blocking off for a while, e.g. `15m` |
+| `restore` | yes | Undo the last change to the hosts file |
+| `status` | | Blocking on/off, domain counts, last update, sources |
+| `check <domain>` | | Whether and why a domain is blocked |
+| `list` | | Your sources, allowlist, and custom blocks |
+| `allow` / `unallow <domain>` | | Add or remove an allowlist entry |
+| `block` / `unblock <domain>` | | Add or remove a custom block |
+| `uninstall [--yes]` | with `--yes` | Remove the block, the backup, and Lime's data |
+
+With `just` installed, `just update`, `just apply`, `just disable`,
+`just status`, `just pause 15m`, `just restore`, and `just check <domain>` do
+the same, adding `sudo` on macOS and Linux where needed. Run `just` to see them
+all.
 
 ## Limitations
 
@@ -327,10 +313,14 @@ hostnames that JavaScript generates at runtime, or popunders opened with
 [uBlock Origin](https://github.com/gorhill/uBlock); it's a complement, not a
 replacement.
 
-Lime is the whole-machine layer: every app, ~71k known ad/tracker domains.
-uBlock Origin is the in-browser layer that can also block scripts, URL paths,
-and popups. You need both because a hosts file operates below the browser and
-can't see same-domain or JavaScript-injected ads.
+Lime is the whole-machine layer: every app, about 71,000 known ad and tracker
+domains. uBlock Origin is the in-browser layer that can also block scripts,
+URL paths, and popups. You need both because a hosts file works below the
+browser and can't see same-domain or JavaScript-injected ads.
+
+A hosts entry also only blocks the exact name. `0.0.0.0 ads.example.com`
+doesn't block `x.ads.example.com` unless that name is listed too, because
+hosts files have no wildcards.
 
 ### Setups that may skip the hosts file
 
@@ -342,10 +332,6 @@ one. To check your own setup, run `adblocker check <domain>` on a domain that
 should be blocked, then visit it in the browser or app you care about. If it
 loads, that software is going around the hosts file.
 
-A hosts entry also only blocks the exact name. `0.0.0.0 ads.example.com` does
-not block `x.ads.example.com` unless that name is listed too, because hosts
-files have no wildcards.
-
 ### Setting up uBlock Origin for the cases Lime can't handle
 
 1. **Install uBlock Origin** in your browser from
@@ -354,49 +340,65 @@ files have no wildcards.
    extension.
 
 2. **Enable the popups and annoyances filter lists.** Open the uBlock Origin
-   dashboard (click its icon → the gears / ⚙️ icon) → **Filter lists** →
+   dashboard (click its icon, then the gears / ⚙️ icon) → **Filter lists** →
    **Annoyances**, and turn on **Popups** and **AdGuard Annoyances**. Click
-   **Apply changes**. This generically catches `window.open` popunders and
-   on-site nuisances that no hosts file can see.
+   **Apply changes**. This catches `window.open` popunders and on-site
+   nuisances that no hosts file can see.
 
 3. **Block the ad-injection script on a specific site.** When a site serves
    both content and ads from the same domain (so blocking the domain would
    break the content), block just the ad script's path instead. In the
    dashboard → **My filters**, add a line like:
-   ```
+
+   ```text
    ||example.com/assets/ads.js$script
    ```
+
    This is a *path-level* block: it kills the ad script without touching the
-   content on the same host. A hosts file cannot do this; only a browser
+   content on the same host. A hosts file can't do this; only a browser
    extension can.
 
 4. **Catch what slips through.** If a popunder still opens, uBlock Origin
    logs the blocked or attempted URL in its dashboard → **Logger**. If the
    popunder lives on a *separate* ad domain, you can add it either to
    uBlock's **My filters** or to Lime:
+
    ```bash
    adblocker block that-ad-domain.example
-   just update && sudo just apply
+   sudo adblocker apply
    ```
+
    If it lives on the *same* domain as the content, keep the block in
    uBlock Origin (step 3), not in Lime.
 
 ### A concrete example
 
 Streaming embed sites (e.g. `vsembed.ru`) are the exact case a hosts file
-cannot touch: the video and the ads are served from the same host, the ad
+can't touch: the video and the ads are served from the same host, the ad
 script (`/assets/sbx.js`) is bundled and same-origin, and the popunder URLs
-are built at runtime with `window.open` from the current date, so there is
-no fixed ad domain to sinkhole. Adding the site to Lime would break the
-video. The fix lives entirely in uBlock Origin: block the script path
+are built at runtime with `window.open` from the current date, so there's no
+fixed ad domain to sinkhole. Adding the site to Lime would break the video.
+The fix lives entirely in uBlock Origin: block the script path
 (`||vsembed.ru/assets/sbx.js$script`) and enable the Popups filter list.
+
+## Development
+
+```bash
+just test   # cargo test
+just lint   # cargo fmt --check + cargo clippy -D warnings
+just build
+```
+
+CI runs fmt, clippy, and the test suite on macOS, Windows, and Linux for every
+push and pull request. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the tool
+is built and [RELEASING.md](RELEASING.md) for how releases are cut.
 
 ## Credits
 
 Blocklist: [StevenBlack/hosts](https://github.com/StevenBlack/hosts), MIT
-License. Lime merges, validates, and applies that list; it does not
+License. Lime merges, validates, and applies that list; it doesn't
 redistribute the list itself.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
