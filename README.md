@@ -118,10 +118,62 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the tool is built.
 
 A hosts file blocks whole domains, so it **cannot** block ads served from the
 same domain as the content you want — YouTube, many streaming services, and
-most social platforms serve ads from their own domains. Use `adblocker`
-**alongside** a browser content blocker such as
-[uBlock Origin](https://github.com/gorhill/uBlock); it is a complement, not a
-replacement.
+most social platforms serve ads from their own domains. It also cannot block
+ads whose hostnames are generated at runtime by JavaScript, or popunders
+opened with `window.open`. Use `adblocker` **alongside** a browser content
+blocker such as [uBlock Origin](https://github.com/gorhill/uBlock); it is a
+complement, not a replacement.
+
+`adblocker` is the broad, whole-machine layer (every app, ~71k known
+ad/tracker domains). uBlock Origin is the in-browser layer that can also
+block scripts, URL paths, and popups. You need both because a hosts file
+operates below the browser and cannot see same-domain or JavaScript-injected
+ads.
+
+### Setting up uBlock Origin for the cases `adblocker` can't handle
+
+1. **Install uBlock Origin** in your browser from
+   [github.com/gorhill/uBlock](https://github.com/gorhill/uBlock) (or your
+   browser's add-on store). Use uBlock *Origin*, not the unrelated "uBlock"
+   extension.
+
+2. **Enable the popups and annoyances filter lists.** Open the uBlock Origin
+   dashboard (click its icon → the gears / ⚙️ icon) → **Filter lists** →
+   **Annoyances**, and turn on **Popups** and **AdGuard Annoyances**. Click
+   **Apply changes**. This generically catches `window.open` popunders and
+   on-site nuisances that no hosts file can see.
+
+3. **Block the ad-injection script on a specific site.** When a site serves
+   both content and ads from the same domain (so blocking the domain would
+   break the content), block just the ad script's path instead. In the
+   dashboard → **My filters**, add a line like:
+   ```
+   ||example.com/assets/ads.js$script
+   ```
+   This is a *path-level* block — it kills the ad script without touching the
+   content on the same host. A hosts file cannot do this; only a browser
+   extension can.
+
+4. **Catch what slips through.** If a popunder still opens, uBlock Origin
+   logs the blocked or attempted URL in its dashboard → **Logger**. If the
+   popunder lives on a *separate* ad domain, you can add it either to
+   uBlock's **My filters** or to `adblocker`:
+   ```bash
+   adblocker block that-ad-domain.example
+   just update && sudo just apply
+   ```
+   If it lives on the *same* domain as the content, keep the block in
+   uBlock Origin (step 3), not in `adblocker`.
+
+### A concrete example
+
+Streaming embed sites (e.g. `vsembed.ru`) are the exact case a hosts file
+cannot touch: the video and the ads are served from the same host, the ad
+script (`/assets/sbx.js`) is bundled and same-origin, and the popunder URLs
+are built at runtime with `window.open` from the current date — so there is
+no fixed ad domain to sinkhole. Adding the site to `adblocker` would break
+the video. The fix lives entirely in uBlock Origin: block the script path
+(`||vsembed.ru/assets/sbx.js$script`) and enable the Popups filter list.
 
 ## Credits
 
