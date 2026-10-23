@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::error::{AdBlockerError, Result};
 
-/// Hard cap on a single response body. StevenBlack's unified hosts is
+/// Hard cap on a single response body. `StevenBlack`'s unified hosts is
 /// ~2.2 MB; 20 MB gives headroom for additional sources without allowing
 /// runaway downloads.
 const MAX_RESPONSE_SIZE: u64 = 20 * 1024 * 1024;

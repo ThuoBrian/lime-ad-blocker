@@ -9,10 +9,12 @@ use std::collections::BTreeSet;
 use crate::error::{AdBlockerError, Result};
 
 /// Domains that must never be blocked, regardless of source or user config.
+/// Each entry also protects all of its subdomains.
 ///
-/// Includes the Apple software-update / activation / iCloud domains that
-/// would break the system if blocked, and the blocklist source host itself
-/// (so a future `update` can always fetch the list).
+/// Includes the Apple and Microsoft update / activation / sign-in domains
+/// that would break the system if blocked, and the default blocklist source
+/// host (so a future `update` can always fetch the list). The hosts of any
+/// other configured sources are protected at merge time.
 pub const PROTECTED_DOMAINS: &[&str] = &[
     // Apple software update & activation
     "swscan.apple.com",
@@ -40,6 +42,18 @@ pub const PROTECTED_DOMAINS: &[&str] = &[
     // iCloud
     "icloud.com",
     "setup.icloud.com",
+    // Windows Update & delivery
+    "windowsupdate.com",
+    "update.microsoft.com",
+    "delivery.mp.microsoft.com",
+    "download.microsoft.com",
+    // Windows activation & Microsoft sign-in
+    "sls.microsoft.com",
+    "login.live.com",
+    "login.microsoftonline.com",
+    // Microsoft Defender definitions & cloud protection
+    "definitionupdates.microsoft.com",
+    "wdcp.microsoft.com",
     // Blocklist source host
     "raw.githubusercontent.com",
 ];
@@ -86,9 +100,19 @@ pub fn normalize_domain(input: &str) -> Result<String> {
     Ok(s)
 }
 
-/// Returns true if `domain` (already normalized) is on the protected list.
+/// Returns true if `domain` (already normalized) is on the protected list or
+/// is a subdomain of a protected entry.
 pub fn is_protected(domain: &str) -> bool {
-    PROTECTED_DOMAINS.contains(&domain)
+    PROTECTED_DOMAINS
+        .iter()
+        .any(|&p| is_same_or_subdomain(domain, p))
+}
+
+/// `domain == parent` or `domain` ends with `.parent`.
+pub fn is_same_or_subdomain(domain: &str, parent: &str) -> bool {
+    domain
+        .strip_suffix(parent)
+        .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }
 
 /// Per-category rejection counts from parsing a single hosts file.
@@ -246,6 +270,23 @@ mod tests {
         // `0.0.0.0` is an IP literal, not a domain.
         assert!(normalize_domain("0.0.0.0").is_err());
         assert!(normalize_domain("10.0.0.1").is_err());
+    }
+
+    // --- is_protected ---
+
+    #[test]
+    fn protected_matches_exact_and_subdomains() {
+        assert!(is_protected("icloud.com"));
+        assert!(is_protected("p01-caldav.icloud.com"));
+        assert!(is_protected("ctldl.windowsupdate.com"));
+        assert!(is_protected("activation-v2.sls.microsoft.com"));
+    }
+
+    #[test]
+    fn protected_does_not_match_lookalikes() {
+        assert!(!is_protected("evilicloud.com"));
+        assert!(!is_protected("icloud.com.evil.net"));
+        assert!(!is_protected("microsoft.com"));
     }
 
     // --- parse_hosts_text ---

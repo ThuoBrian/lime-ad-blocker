@@ -1,8 +1,9 @@
-//! Read and write `/etc/hosts` between ad-blocker markers.
+//! Read and write the system hosts file between ad-blocker markers.
 //!
 //! Only content between `# BEGIN AD-BLOCKER` and `# END AD-BLOCKER` is
-//! touched; the macOS defaults and any other entries are preserved. Writes
-//! are atomic (temp file + rename) with root:wheel 644 ownership preserved.
+//! touched; the OS defaults and any other entries are preserved, including
+//! the file's line-ending style (LF or CRLF). Writes are atomic (temp file +
+//! rename); on Unix the result is mode 0644.
 
 use std::path::Path;
 
@@ -17,6 +18,14 @@ pub struct HostsSections {
     pub before: String,
     pub block: String,
     pub after: String,
+    /// The file used CRLF line endings (typical on Windows); write them back.
+    pub crlf: bool,
+}
+
+impl HostsSections {
+    fn eol(&self) -> &'static str {
+        if self.crlf { "\r\n" } else { "\n" }
+    }
 }
 
 /// Marker state discovered while reading a hosts file.
@@ -49,6 +58,9 @@ pub fn read_hosts(path: &Path) -> Result<MarkerState> {
         source: e,
     })?;
 
+    let crlf = content.contains("\r\n");
+    let eol = if crlf { "\r\n" } else { "\n" };
+    // `.lines()` strips both `\n` and `\r\n` terminators.
     let lines: Vec<&str> = content.lines().collect();
 
     let mut begin_lines: Vec<usize> = Vec::new();
@@ -72,13 +84,14 @@ pub fn read_hosts(path: &Path) -> Result<MarkerState> {
                     "END marker appears before BEGIN marker".to_string(),
                 ));
             }
-            let before = lines[..begin].join("\n");
-            let block = lines[begin + 1..end].join("\n");
-            let after = lines[end + 1..].join("\n");
+            let before = lines[..begin].join(eol);
+            let block = lines[begin + 1..end].join(eol);
+            let after = lines[end + 1..].join(eol);
             Ok(MarkerState::Present(HostsSections {
                 before,
                 block,
                 after,
+                crlf,
             }))
         }
         (b, e) => {
@@ -96,24 +109,25 @@ pub fn read_hosts(path: &Path) -> Result<MarkerState> {
 
 /// Build the new hosts file content from preserved sections and a domain list.
 pub fn build_hosts_content(sections: &HostsSections, domains: &[String]) -> String {
+    let eol = sections.eol();
     let mut out = String::new();
     if !sections.before.is_empty() {
         out.push_str(&sections.before);
-        out.push('\n');
+        out.push_str(eol);
     }
     out.push_str(BEGIN_MARKER);
-    out.push('\n');
+    out.push_str(eol);
     for domain in domains {
         out.push_str("0.0.0.0 ");
         out.push_str(domain);
-        out.push('\n');
+        out.push_str(eol);
     }
     out.push_str(END_MARKER);
-    out.push('\n');
+    out.push_str(eol);
     if !sections.after.is_empty() {
         out.push_str(&sections.after);
         if !out.ends_with('\n') {
-            out.push('\n');
+            out.push_str(eol);
         }
     }
     out
@@ -125,11 +139,12 @@ pub fn sections_from_unmarked(content: &str) -> HostsSections {
         before: content.to_string(),
         block: String::new(),
         after: String::new(),
+        crlf: content.contains("\r\n"),
     }
 }
 
 /// Write the hosts file atomically (temp file in the same directory, then
-/// rename) with mode 0644. Does not flush DNS — use [`write_hosts_atomic`]
+/// rename) with mode 0644 on Unix. Does not flush DNS — use [`write_hosts_atomic`]
 /// in production or this in tests.
 pub fn write_hosts_atomic_no_flush(path: &Path, content: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| AdBlockerError::Io {
@@ -158,34 +173,45 @@ pub fn write_hosts_atomic_no_flush(path: &Path, content: &str) -> Result<()> {
         )?;
     }
 
-    temp.persist(path).map_err(|e| AdBlockerError::Io {
-        path: path.display().to_string(),
-        source: e.error,
-    })?;
-
-    Ok(())
-}
-
-/// Write the hosts file atomically and flush the macOS DNS cache.
-pub fn write_hosts_atomic(path: &Path, content: &str) -> Result<()> {
-    write_hosts_atomic_no_flush(path, content)?;
-    flush_dns();
-    Ok(())
-}
-
-/// Back up the hosts file to `<path>.adblocker-backup` if no backup exists.
-pub fn ensure_backup(path: &Path) -> Result<()> {
-    let backup = backup_path(path);
-    if !backup.exists() {
-        std::fs::copy(path, &backup).map_err(|e| AdBlockerError::Io {
-            path: backup.display().to_string(),
-            source: e,
-        })?;
+    // On Windows the rename can briefly fail with access-denied or a sharing
+    // violation while antivirus or the DNS Client has the file open; retry.
+    let mut attempts = 0;
+    loop {
+        match temp.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(e) if cfg!(windows) && attempts < 5 && is_transient_lock(&e.error) => {
+                attempts += 1;
+                temp = e.file;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                return Err(AdBlockerError::Io {
+                    path: path.display().to_string(),
+                    source: e.error,
+                });
+            }
+        }
     }
+}
+
+/// Access denied, or Windows `ERROR_SHARING_VIOLATION` (32).
+fn is_transient_lock(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(32)
+}
+
+/// Copy the hosts file to `<path>.adblocker-backup`, replacing any older
+/// backup. Called before every change, so the backup is always the version
+/// just before the most recent change and `restore` undoes exactly one step.
+pub fn backup(path: &Path) -> Result<()> {
+    let backup = backup_path(path);
+    std::fs::copy(path, &backup).map_err(|e| AdBlockerError::Io {
+        path: backup.display().to_string(),
+        source: e,
+    })?;
     Ok(())
 }
 
-/// Path used for the one-time backup of the original hosts file.
+/// Path of the rolling hosts-file backup.
 pub fn backup_path(path: &Path) -> std::path::PathBuf {
     // For "/etc/hosts" this yields "/etc/hosts.adblocker-backup".
     let mut buf = path.as_os_str().to_os_string();
@@ -201,14 +227,15 @@ pub fn remove_block_no_flush(path: &Path) -> Result<()> {
             "no ad-blocker markers found — nothing to disable".to_string(),
         )),
         MarkerState::Present(sections) => {
+            let eol = sections.eol();
             let mut content = sections.before;
             if !content.is_empty() && !content.ends_with('\n') {
-                content.push('\n');
+                content.push_str(eol);
             }
             if !sections.after.is_empty() {
                 content.push_str(&sections.after);
                 if !content.ends_with('\n') {
-                    content.push('\n');
+                    content.push_str(eol);
                 }
             }
             write_hosts_atomic_no_flush(path, &content)
@@ -216,16 +243,10 @@ pub fn remove_block_no_flush(path: &Path) -> Result<()> {
     }
 }
 
-/// Remove the ad-blocker block and flush DNS.
-pub fn remove_block(path: &Path) -> Result<()> {
-    remove_block_no_flush(path)?;
-    flush_dns();
-    Ok(())
-}
-
 /// Flush the macOS DNS cache. Failure is a warning on stderr, not a hard
 /// error: the hosts file is already written at the call site, and a failed
 /// flush does not undo it.
+#[cfg(target_os = "macos")]
 pub fn flush_dns() {
     let r1 = std::process::Command::new("dscacheutil")
         .arg("-flushcache")
@@ -242,29 +263,63 @@ pub fn flush_dns() {
     }
 }
 
-/// Count the blocked entries (lines between markers) in the hosts file.
-/// Returns 0 if the markers are absent or the file cannot be read.
-pub fn count_blocked_in_hosts(path: &Path) -> usize {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return 0;
-    };
-    let mut count = 0;
+/// Flush the Windows DNS Client cache. Same warn-don't-fail policy as the
+/// macOS version.
+#[cfg(windows)]
+pub fn flush_dns() {
+    let ok = std::process::Command::new("ipconfig")
+        .arg("/flushdns")
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!("warning: hosts file updated but DNS cache flush failed;");
+        eprintln!("         run: ipconfig /flushdns");
+    }
+}
+
+/// Flush the systemd-resolved cache on Linux. Systems without
+/// `resolvectl` usually have no local DNS cache, so its absence is silent;
+/// a failing `resolvectl` is a warning, as on the other platforms.
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn flush_dns() {
+    match std::process::Command::new("resolvectl")
+        .arg("flush-caches")
+        .status()
+    {
+        Ok(s) if !s.success() => {
+            eprintln!("warning: hosts file updated but DNS cache flush failed;");
+            eprintln!("         run: resolvectl flush-caches");
+        }
+        _ => {}
+    }
+}
+
+/// The domains between the markers (`0.0.0.0 <domain>` lines).
+fn blocked_entries(content: &str) -> impl Iterator<Item = &str> {
     let mut inside = false;
-    for line in content.lines() {
+    content.lines().filter_map(move |line| {
         let trimmed = line.trim();
         if trimmed == BEGIN_MARKER {
             inside = true;
-            continue;
-        }
-        if trimmed == END_MARKER {
+        } else if trimmed == END_MARKER {
             inside = false;
-            continue;
+        } else if inside {
+            return trimmed.strip_prefix("0.0.0.0 ").map(str::trim);
         }
-        if inside && trimmed.starts_with("0.0.0.0 ") {
-            count += 1;
-        }
-    }
-    count
+        None
+    })
+}
+
+/// Count the blocked entries (lines between markers) in the hosts file.
+/// Returns 0 if the markers are absent or the file cannot be read.
+pub fn count_blocked_in_hosts(path: &Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |c| blocked_entries(&c).count())
+}
+
+/// Whether `domain` (normalized) is blocked between the markers right now.
+pub fn is_blocked_in_hosts(path: &Path, domain: &str) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|c| blocked_entries(&c).any(|d| d == domain))
 }
 
 #[cfg(test)]
@@ -273,11 +328,11 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    fn make_hosts(content: &str) -> NamedTempFile {
+    fn make_hosts(content: &str) -> tempfile::TempPath {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f.flush().unwrap();
-        f
+        f.into_temp_path()
     }
 
     // --- read_hosts marker handling ---
@@ -285,7 +340,7 @@ mod tests {
     #[test]
     fn read_no_markers() {
         let f = make_hosts("127.0.0.1 localhost\n");
-        let state = read_hosts(f.path()).unwrap();
+        let state = read_hosts(&f).unwrap();
         assert!(matches!(state, MarkerState::Absent));
     }
 
@@ -297,14 +352,14 @@ mod tests {
              0.0.0.0 evil.com\n\
              # END AD-BLOCKER\n",
         );
-        let state = read_hosts(f.path()).unwrap();
+        let state = read_hosts(&f).unwrap();
         match state {
             MarkerState::Present(s) => {
                 assert!(s.before.contains("localhost"));
                 assert!(s.block.contains("evil.com"));
                 assert!(s.after.is_empty());
             }
-            _ => panic!("expected Present"),
+            MarkerState::Absent => panic!("expected Present"),
         }
     }
 
@@ -317,10 +372,10 @@ mod tests {
              # END AD-BLOCKER\n\
              # my custom entry\n",
         );
-        let state = read_hosts(f.path()).unwrap();
+        let state = read_hosts(&f).unwrap();
         match state {
             MarkerState::Present(s) => assert!(s.after.contains("# my custom entry")),
-            _ => panic!("expected Present"),
+            MarkerState::Absent => panic!("expected Present"),
         }
     }
 
@@ -331,14 +386,14 @@ mod tests {
              # BEGIN AD-BLOCKER\n\
              0.0.0.0 evil.com\n",
         );
-        let err = read_hosts(f.path()).unwrap_err();
+        let err = read_hosts(&f).unwrap_err();
         assert!(err.to_string().contains("no END marker"), "{err}");
     }
 
     #[test]
     fn read_missing_begin() {
         let f = make_hosts("0.0.0.0 evil.com\n# END AD-BLOCKER\n");
-        let err = read_hosts(f.path()).unwrap_err();
+        let err = read_hosts(&f).unwrap_err();
         assert!(err.to_string().contains("no BEGIN marker"), "{err}");
     }
 
@@ -349,7 +404,7 @@ mod tests {
              # BEGIN AD-BLOCKER\n\
              # END AD-BLOCKER\n",
         );
-        let err = read_hosts(f.path()).unwrap_err();
+        let err = read_hosts(&f).unwrap_err();
         assert!(err.to_string().contains("2 BEGIN markers"), "{err}");
     }
 
@@ -360,14 +415,14 @@ mod tests {
              # END AD-BLOCKER\n\
              # END AD-BLOCKER\n",
         );
-        let err = read_hosts(f.path()).unwrap_err();
+        let err = read_hosts(&f).unwrap_err();
         assert!(err.to_string().contains("2 END markers"), "{err}");
     }
 
     #[test]
     fn read_end_before_begin() {
         let f = make_hosts("# END AD-BLOCKER\n# BEGIN AD-BLOCKER\n");
-        let err = read_hosts(f.path()).unwrap_err();
+        let err = read_hosts(&f).unwrap_err();
         assert!(
             err.to_string().contains("END marker appears before BEGIN"),
             "{err}"
@@ -380,8 +435,7 @@ mod tests {
     fn build_content_with_domains() {
         let sections = HostsSections {
             before: "127.0.0.1 localhost".to_string(),
-            block: String::new(),
-            after: String::new(),
+            ..Default::default()
         };
         let out = build_hosts_content(&sections, &["evil.com".to_string(), "ads.com".to_string()]);
         assert!(out.contains("127.0.0.1 localhost"));
@@ -395,11 +449,45 @@ mod tests {
     fn build_content_preserves_after() {
         let sections = HostsSections {
             before: "127.0.0.1 localhost".to_string(),
-            block: String::new(),
             after: "# my entry".to_string(),
+            ..Default::default()
         };
         let out = build_hosts_content(&sections, &["evil.com".to_string()]);
         assert!(out.contains("# my entry"));
+    }
+
+    // --- line endings ---
+
+    #[test]
+    fn crlf_file_round_trips_through_apply_and_disable() {
+        let original = "127.0.0.1 localhost\r\n::1 localhost\r\n";
+        let f = make_hosts(original);
+        let sections = sections_from_unmarked(original);
+        let content = build_hosts_content(&sections, &["evil.com".to_string()]);
+        assert!(
+            !content.replace("\r\n", "").contains('\n'),
+            "bare LF in CRLF file"
+        );
+        write_hosts_atomic_no_flush(&f, &content).unwrap();
+
+        match read_hosts(&f).unwrap() {
+            MarkerState::Present(s) => assert!(s.crlf),
+            MarkerState::Absent => panic!("expected Present"),
+        }
+        remove_block_no_flush(&f).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), original);
+    }
+
+    #[test]
+    fn lf_file_round_trips_through_apply_and_disable() {
+        let original = "127.0.0.1 localhost\n::1 localhost\n";
+        let f = make_hosts(original);
+        let content =
+            build_hosts_content(&sections_from_unmarked(original), &["evil.com".to_string()]);
+        assert!(!content.contains('\r'));
+        write_hosts_atomic_no_flush(&f, &content).unwrap();
+        remove_block_no_flush(&f).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), original);
     }
 
     // --- atomic write ---
@@ -412,6 +500,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "test\n");
     }
 
+    #[cfg(unix)]
     #[test]
     fn write_atomic_sets_0644_permissions() {
         use std::os::unix::fs::PermissionsExt;
@@ -436,7 +525,7 @@ mod tests {
     #[test]
     fn remove_block_no_markers_errors() {
         let f = make_hosts("127.0.0.1 localhost\n");
-        let err = remove_block_no_flush(f.path()).unwrap_err();
+        let err = remove_block_no_flush(&f).unwrap_err();
         assert!(err.to_string().contains("nothing to disable"), "{err}");
     }
 
@@ -448,8 +537,8 @@ mod tests {
              0.0.0.0 evil.com\n\
              # END AD-BLOCKER\n",
         );
-        remove_block_no_flush(f.path()).unwrap();
-        let after = std::fs::read_to_string(f.path()).unwrap();
+        remove_block_no_flush(&f).unwrap();
+        let after = std::fs::read_to_string(&f).unwrap();
         assert!(after.contains("localhost"));
         assert!(!after.contains("BEGIN AD-BLOCKER"));
         assert!(!after.contains("evil.com"));
@@ -464,8 +553,8 @@ mod tests {
              # END AD-BLOCKER\n\
              10.0.0.1 myhost\n",
         );
-        remove_block_no_flush(f.path()).unwrap();
-        let after = std::fs::read_to_string(f.path()).unwrap();
+        remove_block_no_flush(&f).unwrap();
+        let after = std::fs::read_to_string(&f).unwrap();
         assert!(after.contains("myhost"));
         assert!(after.contains("localhost"));
         assert!(!after.contains("evil.com"));
@@ -473,6 +562,7 @@ mod tests {
 
     // --- symlink refusal ---
 
+    #[cfg(unix)]
     #[test]
     fn refuse_symlink() {
         let dir = tempfile::tempdir().unwrap();
@@ -493,22 +583,36 @@ mod tests {
     }
 
     #[test]
-    fn ensure_backup_creates_copy_once() {
+    fn backup_tracks_latest_version() {
         let dir = tempfile::tempdir().unwrap();
         let hosts = dir.path().join("hosts");
         std::fs::write(&hosts, "127.0.0.1 localhost\n").unwrap();
-        ensure_backup(&hosts).unwrap();
-        let backup = backup_path(&hosts);
+        backup(&hosts).unwrap();
+        let backup_file = backup_path(&hosts);
         assert_eq!(
-            std::fs::read_to_string(&backup).unwrap(),
+            std::fs::read_to_string(&backup_file).unwrap(),
             "127.0.0.1 localhost\n"
         );
-        // Second call must not overwrite.
+        // A later backup replaces the older one, so it never goes stale.
         std::fs::write(&hosts, "changed\n").unwrap();
-        ensure_backup(&hosts).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&backup).unwrap(),
-            "127.0.0.1 localhost\n"
+        backup(&hosts).unwrap();
+        assert_eq!(std::fs::read_to_string(&backup_file).unwrap(), "changed\n");
+    }
+
+    // --- blocked entries ---
+
+    #[test]
+    fn blocked_entries_only_between_markers() {
+        let f = make_hosts(
+            "0.0.0.0 outside.com\n\
+             # BEGIN AD-BLOCKER\n\
+             0.0.0.0 evil.com\n\
+             0.0.0.0 ads.com\n\
+             # END AD-BLOCKER\n",
         );
+        assert_eq!(count_blocked_in_hosts(&f), 2);
+        assert!(is_blocked_in_hosts(&f, "evil.com"));
+        assert!(!is_blocked_in_hosts(&f, "outside.com"));
+        assert!(!is_blocked_in_hosts(&f, "sub.evil.com"));
     }
 }
