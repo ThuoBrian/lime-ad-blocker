@@ -1,16 +1,22 @@
 # adblocker configuration.
-# Copy to ~/Library/Application Support/adblocker/config.toml and edit.
+# Copy to config.toml in your app directory and edit:
+#   macOS:   ~/Library/Application Support/adblocker/
+#   Windows: %APPDATA%\adblocker\
+#   Linux:   ~/.config/adblocker/
 # The file is created with these defaults on first run if absent.
 
 # Blocklist sources. Each must be an HTTPS URL returning a hosts-format file.
 # Lines must map a domain to 0.0.0.0 or 127.0.0.1; everything else is ignored.
+# The host of each source is never blocked, so updates keep working.
 sources = [
     "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
 ]
 
-# Domains you never want blocked. These are subtracted from the merged list
-# before anything is written to /etc/hosts.
+# Domains you never want blocked, along with all their subdomains. These are
+# subtracted from the merged list before anything is written to the hosts
+# file. Manage them with `adblocker allow` / `adblocker unallow`.
 allowlist = []
 
-# Domains you want blocked in addition to the sources above.
+# Domains you want blocked in addition to the sources above. Manage them with
+# `adblocker block` / `adblocker unblock`.
 custom_blocks = []
